@@ -1,99 +1,141 @@
-const puppeteer = require('puppeteer');
-const axios = require('axios');
-const fs = require('fs');
+const puppeteer = require("puppeteer");
+const fs = require("fs");
 
-(async () => {
-  try {
-    const browser = await puppeteer.launch({ headless: false }); // Запускаем браузер в headless-режиме
+async function scrapeProduct(loadingTime, url) {
+    const browser = await puppeteer.launch({ headless: true });
     const page = await browser.newPage();
 
-    // Устанавливаем User-Agent и другие заголовки
-    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36');
-    await page.setExtraHTTPHeaders({
-      'Accept-Language': 'ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7',
-    });
-
-    // Переходим на страницу, где выполняется JavaScript-челлендж
-    await page.goto('https://www.vprok.ru/catalog/1301/ovoschi-frukty-griby', {
-      waitUntil: 'networkidle2', // Ждем, пока загрузятся все ресурсы
-    });
-    await page.setViewport({ width: 1280, height: 1024 });
-
-    // Ждем выполнения JavaScript-челленджа
-    await new Promise((resolve) => setTimeout(resolve,10000));// Можно настроить время ожидания
-
-    // Получаем куки после прохождения проверки
-    const cookies = await page.cookies();
-    const cookieString = cookies.map(cookie => `${cookie.name}=${cookie.value}`).join('; ');
-
-    const xsrfTokenCookie = cookies.find(cookie => cookie.name === 'XSRF-TOKEN');
-    const xsrfToken = xsrfTokenCookie ? xsrfTokenCookie.value : null;
-
-    // console.log('Cookies:', cookieString);
-    console.log("X-XSRF-TOKEN:", xsrfToken);
-
-    // Используем куки для выполнения запроса через axios
-    const response = await axios.get('https://www.vprok.ru/web/api/v1/catalog/category/1301?sort=popularity_desc&limit=30&page=1', {
-      headers: {
-        "Accept": "application/json, text/plain, */*",
-        "Accept-Encoding": "gzip, deflate, br, zstd",
-        "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
-        "Content-Length": 62,
-        "Cache-Control": "no-cache",
-        "Connection": "keep-alive",
-        "Host": "www.vprok.ru",
-        "Origin": "https://www.vprok.ru",
-        "Referer": "https://www.vprok.ru/catalog/1301/ovoschi-frukty-griby",
-        "Upgrade-Insecure-Requests": "1",
-        'Cookie': cookieString, 
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.366",
-        "X-Xsrf-Token":  xsrfToken,
-
-      },
-    });
-
-    const html = response.data;
-
-    // console.log('HTML успешно получен.');
-
-    // Находим JSON-данные внутри <script id="__NEXT_DATA__">
-    const startIndex = html.indexOf('<script id="__NEXT_DATA__" type="application/json">');
-    const endIndex = html.indexOf("</script>", startIndex);
-
-    if (startIndex === -1 || endIndex === -1) {
-      console.error("Не удалось найти данные в теге <script id='__NEXT_DATA__'>.");
-      return;
-    }
-
-    const jsonScript = html.substring(
-      startIndex + '<script id="__NEXT_DATA__" type="application/json">'.length,
-      endIndex
+    await page.setUserAgent(
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36"
     );
-
-    const jsonData = JSON.parse(jsonScript);
-
-    // Извлекаем данные о продуктах
-    const products = jsonData.props.pageProps.initialData.products || [];
-    console.log(`Найдено товаров: ${products.length}`);
-
-    // Форматируем данные о продуктах
-    const formattedProducts = products.map((product) => {
-      return `Название товара: ${product.name}
-              Ссылка на изображение: ${product.images[0]?.url || "Нет данных"}
-              Рейтинг: ${product.rating || "Нет данных"}
-              Количество отзывов: ${product.reviews || "Нет данных"}
-              Цена: ${product.price || "Нет данных"}
-              Акционная цена: ${product.discountPrice || "Нет данных"}
-              Цена до акции: ${product.oldPrice || "Нет данных"}
-              Размер скидки: ${product.discount || "Нет данных"}\n`;
+    await page.setExtraHTTPHeaders({
+        "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
     });
 
-    // Сохраняем данные в файл
-    fs.writeFileSync("products-api.txt", formattedProducts.join("\n"), "utf-8");
-    console.log("Данные успешно сохранены в файл products-api.txt");
+    try {
+        await page.goto(url, {
+            waitUntil: "networkidle2",
+            timeout: loadingTime,
+        });
+        await page.setViewport({ width: 1280, height: 1024 });
 
-    // await browser.close();
-  } catch (error) {
-    console.error("Ошибка при выполнении запроса:", error.message);
-  }
-})();
+        const urlForApi = url.match(/(\/catalog\/[0-9]+\/[^\/\?]+)/)?.[1];
+        const categoryId = url.match(/\/catalog\/([0-9]+)/)?.[1];
+
+        if (!urlForApi || !categoryId) {
+            throw new Error("Не удалось извлечь данные из URL. Проверьте формат URL.");
+        }
+
+        const apiForRequest = `https://www.vprok.ru/web/api/v1/catalog/category/${categoryId}?sort=popularity_desc&limit=30&page=1`;
+
+
+        const body = {
+            noRedirect: true,
+            url: urlForApi,
+        };
+
+        // Задержка перед выполнением запроса можно снизить, но на всякий случай подождем 5сек.
+        await new Promise((resolve) => setTimeout(resolve, 5000));
+
+        // Подключаем axios в глобальную видимоть
+        await page.addScriptTag({ url: 'https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js' });
+
+        // Выполнение запроса через axios
+        const response = await page.evaluate(
+            async (url, method, requestBody) => {
+                const axios = window.axios;
+                try {
+                    const response = await axios({
+                        url,
+                        method,
+                        data: requestBody,
+                    });
+
+                    return response.data;
+                } catch (error) {
+                    throw new Error(`Ошибка HTTP: ${error.response?.status || error.message}`);
+                }
+            },
+            apiForRequest,
+            "POST",
+            body
+        );
+
+        const products = response.products.map((item) => {
+            return {
+                name: item.name,
+                image: item.images[0]?.url.replace("<SIZE>", "x500"),
+                rating: item.rating,
+                reviews: item.reviews,
+                price: item.price,
+                discountPrice: item.discountPercent ? item.price : 0,
+                oldPrice: item.oldPrice,
+                discountPercent: item.discountPercent,
+            };
+        });
+
+        const separator = '\n' + '-'.repeat(80) + '\n';
+
+        const data = products
+            .map((item) => {
+                return `\n` +
+                    `Название товара: ${item.name}\n` +
+                    `Ссылка на изображение: ${item.image}\n` +
+                    `Рейтинг: ${item.rating}\n` +
+                    `Количество отзывов: ${item.reviews}\n` +
+                    `Цена: ${item.price}\n` +
+                    `${item.discountPrice ? `Акционная цена: ${item.discountPrice}\n` : ''}` +
+                    `${item.oldPrice ? `Цена до акции: ${item.oldPrice}\n` : ''}` +
+                    `${item.discountPercent ? `Размер скидки: ${item.discountPercent}%\n` : ''}` +
+                    separator;
+            })
+            .join("");
+
+        fs.writeFile("products-api.txt", data, (err) => {
+            if (err) {
+                console.error("Ошибка записи в файл:", err);
+                throw err;
+            }
+            console.log("Данные успешно записаны в файл products-api.txt");
+        });
+
+    } catch (e) {
+        throw new Error(`Ошибка в scrapeProduct: ${e.message}`);
+    } finally {
+        await browser.close();
+    }
+    return true;
+}
+
+async function parser() {
+    const url = process.argv[2];
+    if (!url) {
+        console.error("Необходимо указать URL.");
+        process.exit(1);
+    }
+    let attempt = 0;
+    const loadingTime = 30000;
+    while (attempt < 3) {
+        try {
+            const result = await scrapeProduct(loadingTime, url);
+            if (result) {
+                return true;
+            }
+        } catch (error) {
+            console.error(`Попытка ${attempt + 1}: ${error.message}`);
+            attempt++;
+        }
+    }
+    throw new Error(
+        `Не удалось получить данные после ${attempt} неудачных попыток:(`
+    );
+}
+
+parser()
+    .then(() => {
+        console.log("Все выполнено:)"), process.exit(0);
+    })
+    .catch((e) => {
+        console.error(e);
+        process.exit(1);
+    });

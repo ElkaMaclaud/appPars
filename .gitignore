@@ -1,1 +1,11 @@
+# Игнорировать папку node_modules
 /node_modules
+
+# Игнорировать файл product.txt
+product.txt
+
+# Игнорировать файл screenshot.jpg
+screenshot.jpg
+
+# Игнорировать файл products-api.txt
+products-api.txt
